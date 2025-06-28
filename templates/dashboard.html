@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🌦️ SCADA Weather Forecast</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
+  <style>
+    .dashboard-button-container-left {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+    }
+
+    .fancy-button {
+      display: inline-flex;
+      align-items: center;
+      padding: 8px 15px;
+      background: linear-gradient(135deg, #4b6cb7, #182848);
+      color: #d8d2d2;
+      text-decoration: none;
+      border-radius: 12px;
+      font-size: 14px;
+      font-weight: 400;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+      transition: background 0.3s, transform 0.2s;
+    }
+
+    .fancy-button:hover {
+      background: linear-gradient(135deg, #6b8cd7, #1a2b58);
+      transform: translateY(-2px);
+    }
+
+    .mini-card {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.1);
+      margin: 10px;
+      padding: 10px;
+      border-radius: 10px;
+      width: 130px;
+      text-align: center;
+      cursor: pointer;
+      color: #fff;
+    }
+
+    .mini-card img {
+      width: 60px;
+      height: 60px;
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 999;
+      left: 0; top: 0;
+      width: 100%; height: 100%;
+      overflow: auto;
+      background-color: rgba(0,0,0,0.6);
+    }
+
+    .modal-content {
+      background-color: #11633d;
+      margin: 10% auto;
+      padding: 20px;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 600px;
+      position: relative;
+      color: #fff;
+    }
+
+    .close-modal {
+      color: #fff;
+      position: absolute;
+      top: 10px; right: 20px;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    #modalDetails img {
+      width: 80px;
+      height: 80px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="dashboard-button-container-left">
+  <a href="/view_data" class="fancy-button">
+    <i class="fas fa-database"></i> View Data
+  </a>
+</div>
+
+<div class="card" id="scadaCard">
+  <h2><i class="fas fa-search-location"></i> SCADA Weather</h2>
+
+  <div class="scada-form">
+    <div class="form-group">
+      <label for="stateSelect">Select State:</label>
+      <select id="stateSelect"><option value="">-- Select State --</option></select>
+    </div>
+    <div class="form-group">
+      <label for="locSelect">Select Location:</label>
+      <select id="locSelect" disabled><option value="">-- Select Location --</option></select>
+    </div>
+    <div class="form-group">
+      <label for="plantSelect">Select Plant:</label>
+      <select id="plantSelect" disabled><option value="">-- Select Plant --</option></select>
+    </div>
+    <button id="fetchDataBtn" disabled><i class="fas fa-cloud-sun"></i> Get Weather Data</button>
+  </div>
+
+  <div id="scadaInfoText" class="info-block">
+    <div class="loading">
+      <div class="loader"></div>
+      <span style="margin-left:10px;">Please select state, location & plant</span>
+    </div>
+  </div>
+
+  <div id="forecastContainer">
+    <div id="forecastRow"></div>
+  </div>
+</div>
+
+<!-- Weather Modal -->
+<div id="weatherModal" class="modal">
+  <div class="modal-content">
+    <span class="close-modal">&times;</span>
+    <h3 id="modalTitle">Forecast Details</h3>
+    <div id="modalDetails"></div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  const stateSelect = document.getElementById('stateSelect');
+  const locSelect = document.getElementById('locSelect');
+  const plantSelect = document.getElementById('plantSelect');
+  const fetchBtn = document.getElementById('fetchDataBtn');
+  const infoText = document.getElementById('scadaInfoText');
+  const forecastRow = document.getElementById('forecastRow');
+  const modal = document.getElementById('weatherModal');
+  const closeModal = document.querySelector('.close-modal');
+
+  let hierarchy = {};
+
+  try {
+    const resp = await fetch('/get_filter_hierarchy');
+    hierarchy = await resp.json();
+    for (let state in hierarchy) {
+      const opt = new Option(state, state);
+      stateSelect.add(opt);
+    }
+  } catch (e) {
+    console.error('Error loading hierarchy', e);
+    infoText.textContent = 'Failed to load states.';
+  }
+
+  stateSelect.addEventListener('change', () => {
+    const st = stateSelect.value;
+    locSelect.innerHTML = `<option value="">-- Select Location --</option>`;
+    plantSelect.innerHTML = `<option value="">-- Select Plant --</option>`;
+    plantSelect.disabled = true;
+    fetchBtn.disabled = true;
+    infoText.innerHTML = 'Select location & plant.';
+
+    if (st && hierarchy[st]) {
+      locSelect.disabled = false;
+      Object.keys(hierarchy[st]).forEach(loc => {
+        const opt = new Option(loc, loc);
+        locSelect.add(opt);
+      });
+    } else {
+      locSelect.disabled = true;
+    }
+  });
+
+  locSelect.addEventListener('change', () => {
+    const st = stateSelect.value;
+    const loc = locSelect.value;
+    plantSelect.innerHTML = `<option value="">-- Select Plant --</option>`;
+    fetchBtn.disabled = true;
+    infoText.innerHTML = 'Select plant.';
+
+    if (st && loc && hierarchy[st][loc]) {
+      plantSelect.disabled = false;
+      hierarchy[st][loc]
+        .slice()
+        .sort((a, b) => a - b)
+        .forEach(plant => {
+          const opt = new Option(plant, plant);
+          plantSelect.add(opt);
+        });
+    } else {
+      plantSelect.disabled = true;
+    }
+  });
+
+  plantSelect.addEventListener('change', () => {
+    fetchBtn.disabled = !plantSelect.value;
+    infoText.innerHTML = plantSelect.value ? '' : 'Select plant.';
+  });
+
+  fetchBtn.addEventListener('click', async () => {
+    const loc = locSelect.value;
+    const plant = plantSelect.value;
+    if (!loc || !plant) return;
+
+    infoText.innerHTML = `<div class="loading"></div> Fetching weather...`;
+    forecastRow.innerHTML = '';
+
+    try {
+      const res = await fetch(`/get_weather_by_location?locno=${loc}&plantno=${plant}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      data.forEach(d => {
+        const card = document.createElement('div');
+        card.className = 'mini-card';
+
+        const conditionImgMap = {
+          'light': 'light_rain.png',
+          'Overcast': 'overcast.png',
+          'Partially cloudy': 'partly_cloudy.png',
+          'Rain, Overcast': 'rain_overcast.png',
+          'Rain, Partially cloudy': 'rain_partly_cloudy.png'
+        };
+
+        const imgFile = conditionImgMap[d.Conditions] || 'default.png';
+        const iconUrl = `/static/images/${imgFile}`;
+
+        card.innerHTML = `
+          <h4>${new Date(d.ForecastDate).toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })}</h4>
+          <img src="${iconUrl}" alt="${d.Conditions}"/>
+          <p>${d.Temp}°C &nbsp; (${d.TempMin}°/${d.TempMax}°)</p>
+          <small>${d.Conditions}</small>
+        `;
+
+        card.addEventListener('click', () => {
+          document.getElementById('modalTitle').innerText = `Forecast for ${new Date(d.ForecastDate).toDateString()}`;
+          document.getElementById('modalDetails').innerHTML = `
+            <img src="${iconUrl}" alt="${d.Conditions}">
+            <p><strong>Temperature:</strong> ${d.Temp}°C</p>
+            <p><strong>Min / Max:</strong> ${d.TempMin}° / ${d.TempMax}°</p>
+            <p><strong>Conditions:</strong> ${d.Conditions}</p>
+            ${d.Humidity !== undefined ? `<p><strong>Humidity:</strong> ${d.Humidity}%</p>` : ""}
+            ${d.Windspeed !== undefined ? `<p><strong>Windspeed:</strong> ${d.Windspeed} km/h</p>` : ""}
+            ${d.WindGust !== undefined ? `<p><strong>Wind Gust:</strong> ${d.WindGust} km/h</p>` : ""}
+            ${d.WindDir !== undefined ? `<p><strong>Wind Dir:</strong> ${d.WindDir}</p>` : ""}
+            ${d.Precip !== undefined ? `<p><strong>Precipitation:</strong> ${d.Precip} mm</p>` : ""}
+            ${d.Lat !== undefined ? `<p><strong>Latitude:</strong> ${d.Lat}</p>` : ""}
+            ${d.Lon !== undefined ? `<p><strong>Longitude:</strong> ${d.Lon}</p>` : ""}
+          `;
+          modal.style.display = 'block';
+        });
+
+        forecastRow.appendChild(card);
+      });
+
+      infoText.textContent = '✅ Weather data loaded successfully.';
+    } catch (e) {
+      console.error('❌ Weather fetch error:', e);
+      infoText.textContent = `❌ Error loading weather: ${e.message}`;
+    }
+  });
+
+  // Modal close
+  closeModal.onclick = () => modal.style.display = 'none';
+  window.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
+});
+</script>
+
+</body>
+</html>
